@@ -3,10 +3,12 @@
 
 const MIN_TEAMS = 1;
 const MAX_TEAMS = 5;
+const MAX_TEAM_NAME = 60;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_RE = /^[0-9+\-\s()]{7,20}$/;
-const GRADES = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+// The registration form only offers Grades 8-10 (must match the model's enum)
+const GRADES = ["8", "9", "10"];
 
 const clean = (v, max) =>
   typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, max + 1) : "";
@@ -57,6 +59,16 @@ function validateRegistration(body) {
     b.teams.forEach((t, i) => {
       const n = i + 1;
       const team = t && typeof t === "object" ? t : {};
+
+      // NEW: team name (required, max 60 characters)
+      const teamName = (() => {
+        const value = clean(team.teamName, MAX_TEAM_NAME);
+        if (!value) errors.push(`Team ${n}: team name is required`);
+        else if (value.length > MAX_TEAM_NAME)
+          errors.push(`Team ${n}: team name must be at most ${MAX_TEAM_NAME} characters`);
+        return value;
+      })();
+
       const name = (key, label) => {
         const value = clean(team[key], 100);
         if (!value) errors.push(`Team ${n}: ${label} is required`);
@@ -65,19 +77,34 @@ function validateRegistration(body) {
       };
       const grade = (key, label) => {
         const value = String(team[key] ?? "").trim();
-        if (!GRADES.includes(value)) errors.push(`Team ${n}: ${label} must be a grade from 1 to 12`);
+        if (!GRADES.includes(value)) errors.push(`Team ${n}: ${label} must be Grade 8, 9 or 10`);
         return value;
       };
       data.teams.push({
+        teamName,
         student1Name: name("student1Name", "student 1 name"),
         student1Grade: grade("student1Grade", "student 1 grade"),
         student2Name: name("student2Name", "student 2 name"),
         student2Grade: grade("student2Grade", "student 2 grade"),
       });
     });
+
+    // NEW: team names must be unique within the school (case-insensitive)
+    const seen = new Map(); // lowercased name -> first team number
+    data.teams.forEach((team, i) => {
+      if (!team.teamName) return; // already reported as missing
+      const key = team.teamName.toLowerCase();
+      if (seen.has(key)) {
+        errors.push(
+          `Team ${i + 1}: team name "${team.teamName}" is already used by Team ${seen.get(key)}. Team names must be unique within a school`
+        );
+      } else {
+        seen.set(key, i + 1);
+      }
+    });
   }
 
   return { data, errors };
 }
 
-module.exports = { validateRegistration, MIN_TEAMS, MAX_TEAMS };
+module.exports = { validateRegistration, MIN_TEAMS, MAX_TEAMS, MAX_TEAM_NAME };
