@@ -11,6 +11,7 @@ const csvCell = (value) => {
 };
 
 // REGISTER A SCHOOL  ->  POST /api/registration            (PUBLIC)
+// Body: { schoolName, schoolEmail, roboticsMentor*, englishMentor*, teams: [1 to 5 items] }
 router.post("/", async (req, res, next) => {
   try {
     const { data, errors } = validateRegistration(req.body);
@@ -31,31 +32,25 @@ router.post("/", async (req, res, next) => {
         .status(409)
         .json({ message: "A registration with this school email already exists" });
     }
-    if (err.name === "ValidationError") {
-      const errors = Object.values(err.errors).map((e) => e.message);
-      return res.status(400).json({ message: errors[0], errors });
-    }
     next(err);
   }
 });
 
 // LIST ALL SCHOOLS  ->  GET /api/registration              (ADMIN ONLY)
+// Returns: { stats: { totalSchools, totalTeams, totalStudents }, registrations: [...] }
+// Optional ?search=text filters by school, robotics mentor or English mentor name.
 router.get("/", requireAdmin, async (req, res, next) => {
   try {
     const filter = {};
     if (typeof req.query.search === "string" && req.query.search.trim()) {
       const safe = req.query.search.trim().slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const rx = new RegExp(safe, "i");
-      filter.$or = [
-        { schoolName: rx },
-        { roboticsMentorName: rx },
-        { englishMentorName: rx },
-        { "teams.teamName": rx },
-      ];
+      filter.$or = [{ schoolName: rx }, { roboticsMentorName: rx }, { englishMentorName: rx }];
     }
 
     const registrations = await Registration.find(filter).sort({ submittedAt: -1 });
 
+    // Stats always count everything, not just the searched subset
     const [agg] = await Registration.aggregate([
       {
         $group: {
@@ -78,6 +73,7 @@ router.get("/", requireAdmin, async (req, res, next) => {
 });
 
 // DOWNLOAD CSV  ->  GET /api/registration/export           (ADMIN ONLY)
+// One row per team, so the school/mentor details repeat for each of its teams.
 router.get("/export", requireAdmin, async (req, res, next) => {
   try {
     const registrations = await Registration.find().sort({ submittedAt: 1 });
@@ -86,23 +82,19 @@ router.get("/export", requireAdmin, async (req, res, next) => {
       "School", "School Email",
       "Robotics Mentor", "Robotics Phone", "Robotics Email",
       "English Mentor", "English Phone", "English Email",
-      "Team No", "Team Name",
-      "Student 1", "Student 1 Grade", "Student 2", "Student 2 Grade",
+      "Team No", "Student 1", "Student 1 Grade", "Student 2", "Student 2 Grade",
       "Submitted At",
     ];
     const rows = [header.map(csvCell).join(",")];
 
     for (const r of registrations) {
-      r.teams.teams?.forEach?.((t, i) => {}) // safe check
       r.teams.forEach((t, i) => {
         rows.push(
           [
             r.schoolName, r.schoolEmail,
             r.roboticsMentorName, r.roboticsMentorPhone, r.roboticsMentorEmail,
             r.englishMentorName, r.englishMentorPhone, r.englishMentorEmail,
-            i + 1,
-            t.teamName || "",
-            t.student1Name, t.student1Grade, t.student2Name, t.student2Grade,
+            i + 1, t.student1Name, t.student1Grade, t.student2Name, t.student2Grade,
             r.submittedAt.toISOString(),
           ]
             .map(csvCell)
@@ -113,8 +105,8 @@ router.get("/export", requireAdmin, async (req, res, next) => {
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="registrations.csv"');
-    // \uFEFF ensures Excel reads UTF-8 characters properly without symbols distortion
-    return res.status(200).send("\uFEFF" + rows.join("\r\n"));
+    // BOM so Excel reads UTF-8 names correctly
+    return res.status(200).send("﻿" + rows.join("\r\n"));
   } catch (err) {
     next(err);
   }
